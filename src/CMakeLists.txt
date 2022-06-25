@@ -1,7 +1,8 @@
 include_directories( ${PROJECT_SOURCE_DIR}/libplinkio/src )
 
 set(SRC_LIST
-	source.cc
+	#source.cc
+	simu_ext.cc
 )
 
 add_executable(simu ${SRC_LIST})
