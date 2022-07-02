@@ -83,6 +83,12 @@ struct SimuOptions {
   // it implies that if user provides effect sizes, and --norm-effect is on, we first convert user effect sizes into effect sizes w.r.t. 0-1-2, and convert them back into per-normalized-genotypes effect sizes before saving the resulting .causals file 
   bool norm_effect;
 
+  // Zero effect size, phenotype is purely from noise
+  //bool null_effect;
+
+  // Sampling distribution for noise term
+  std::string noise_dist;
+
   std::string out;
   boost::int64_t seed;
   int trait2_snp_offset;
@@ -102,6 +108,7 @@ struct SimuOptions {
     boost::posix_time::ptime const time_epoch(boost::gregorian::date(1970, 1, 1));
     seed = (boost::posix_time::microsec_clock::local_time() - time_epoch).ticks();
     verbose = false;
+    //null_effect = false;
   }
 };
 
@@ -463,7 +470,7 @@ void fix_and_validate(SimuOptions& simu_options, po::variables_map& vm, Logger& 
     simu_options.out_causals.push_back(simu_options.out + "." + boost::lexical_cast<std::string>(i+1) + ".causals");
 
   if ( boost::filesystem::exists( simu_options.out_pheno ) )
-    log << "WARNING: Target file " << simu_options.out_pheno << " already exists and will be overwritten\n"; 
+    log << "WARNING: Target file " << simu_options.out_pheno << " already exists and will be overwritten\n";
 
   if (simu_options.qt && (vm.count("k") > 0 || vm.count("ncas") > 0 || vm.count("ncon") > 0)) {
     log << "WARNING: Options --k, --ncas, --ncon are not relevant to --qt, and will be ignored\n";
@@ -524,7 +531,7 @@ void fix_and_validate(SimuOptions& simu_options, po::variables_map& vm, Logger& 
   if (!simu_options.causal_regions.empty() && !simu_options.causal_variants.empty()) {
     log << "WARNING: Option --causal-regions can not be used together with --causal-variants, and will be ignored\n";
     simu_options.causal_regions.clear();
-  }  
+  }
   if (!simu_options.causal_regions.empty() && (simu_options.causal_regions.size() != simu_options.num_components))
     throw std::invalid_argument(std::string("ERROR: Number of --causal-regions values does not match the number of components"));
 
@@ -536,7 +543,7 @@ void fix_and_validate(SimuOptions& simu_options, po::variables_map& vm, Logger& 
   for (auto val: simu_options.causal_variants) if (!boost::filesystem::exists( val )) {
     std::stringstream ss; ss << "ERROR: input file " << val << " does not exist";
     throw std::runtime_error(ss.str());
-  } 
+  }
 
   // initialize default value for --trait1-sigsq and check for out of range values
   {
@@ -642,7 +649,7 @@ void fix_and_validate(SimuOptions& simu_options, po::variables_map& vm, Logger& 
         throw std::invalid_argument("ERROR: sum of --causal-pi must be less than 1.0, or sum of --causal-n must be less than number of variants present in the input file.");
     }
   } else {
-    std::vector<int> region_per_variant;  
+    std::vector<int> region_per_variant;
     for (int i = 0; i < simu_options.num_variants; i++) region_per_variant.push_back(-1);
 
     // Validate that --causal-regions have no overlap
@@ -660,18 +667,18 @@ void fix_and_validate(SimuOptions& simu_options, po::variables_map& vm, Logger& 
       if (!simu_options.causal_pi.empty()) {
         simu_options.causal_n.push_back(static_cast<int>(simu_options.causal_pi[component_index] * variant_indices.size()));
         if (simu_options.causal_n.back() <= 0) {
-          std::stringstream ss; ss << "--causal-pi " << simu_options.causal_pi[component_index] 
+          std::stringstream ss; ss << "--causal-pi " << simu_options.causal_pi[component_index]
                                    << " is too low because --causal-region " << simu_options.causal_regions[component_index]
                                    << " contains only " <<  variant_indices.size() << " variants.";
-          throw std::runtime_error(ss.str()); 
+          throw std::runtime_error(ss.str());
         }
       }
 
       if (simu_options.causal_n[component_index] > variant_indices.size()) {
-        std::stringstream ss; ss << "--causal-n " << simu_options.causal_n[component_index] 
+        std::stringstream ss; ss << "--causal-n " << simu_options.causal_n[component_index]
                                   << " is too high because --causal-region " << simu_options.causal_regions[component_index]
                                   << " contains only " <<  variant_indices.size() << " variants.";
-        throw std::runtime_error(ss.str()); 
+        throw std::runtime_error(ss.str());
       }
     }
     simu_options.causal_pi.clear();
@@ -692,12 +699,21 @@ void fix_and_validate(SimuOptions& simu_options, po::variables_map& vm, Logger& 
     // technical trick: the easiest way to implement --trait2-snp-ofset is to say that there are 3 components.
     // - component 1 contains all variants causal in trait1 but not in trait2
     // - component 2 contains all variants causal in trait2 but not in trait1
-    // - component 3 contains all variants causal in both traits (which happens if, just by chance, applying the offset hits a completely strange variant)  
+    // - component 3 contains all variants causal in both traits (which happens if, just by chance, applying the offset hits a completely strange variant)
     simu_options.num_components = 3;
   }
 
   // if (vm.count("seed") == 0)
   //  log << "--seed option was set to " << simu_options.seed << "\n";
+    if (simu_options.noise_dist.empty()) {
+        simu_options.noise_dist = "normal";
+    }
+    else {
+        boost::algorithm::to_lower(simu_options.noise_dist);
+        if ((simu_options.noise_dist != "t") && (simu_options.noise_dist != "uniform"))
+            simu_options.noise_dist = "normal";
+    }
+
 }
 
 void describe_simu_options(SimuOptions& s, Logger& log) {
@@ -726,6 +742,8 @@ void describe_simu_options(SimuOptions& s, Logger& log) {
   if (!s.trait1_s_pow.empty()) log << "\t--trait1-s-pow " << s.trait1_s_pow << " \\\n";
   if (!s.trait2_s_pow.empty()) log << "\t--trait2-s-pow " << s.trait2_s_pow << " \\\n";
   if (s.norm_effect) log << "\t--norm-effect \\\n";
+//  if (s.null_effect) log << "\t--null-effect \\\n";
+  log << "\t--noise-dist " << s.noise_dist << " \\\n";
   log << "\n";
 }
 
@@ -892,6 +910,11 @@ void find_effect_sizes(const SimuOptions& simu_options, boost::mt19937& rng,
   effect1_per_variant->clear();
   for (int i = 0; i < simu_options.num_variants; i++) effect1_per_variant->push_back(0.0);
 
+//  if (simu_options.null_effect == true) {
+//      std::cout << "Null effect is enabled: each variant has zero genetic effect." << std::endl;
+//      return;
+//  }
+
   boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
 
   for (int i = 0; i < simu_options.num_variants; i++) {
@@ -984,6 +1007,8 @@ void find_pheno(const SimuOptions& simu_options,
       throw std::runtime_error(ss.str());
     }
 
+    //std::cout << effect1_per_variant[variant_index] << std::endl;
+
     double average_A1_dosage = 2 * freq_vec[variant_index]; 
     for (int sample_index = 0; sample_index < simu_options.num_samples; sample_index++) {
       // missing value have 0 contribution to phenotype.
@@ -994,6 +1019,7 @@ void find_pheno(const SimuOptions& simu_options,
 
       pheno1_per_sample->at(sample_index) += (num_of_A1_copies - average_A1_dosage) * effect1_per_variant[variant_index];
       if (bivariate) pheno2_per_sample->at(sample_index) += (num_of_A1_copies - average_A1_dosage) * effect2_per_variant[variant_index];
+      //std::cout << pheno1_per_sample->at(sample_index) << ", " << variant_index << std::endl;
     }
   }
 
@@ -1006,7 +1032,7 @@ void find_pheno(const SimuOptions& simu_options,
   pio_files->reset_row();
 }
 
-void apply_heritability(float hsq, boost::mt19937& rng, std::vector<double>* pheno_per_sample, std::vector<double>* effect_per_variant) {
+void apply_heritability(float hsq, boost::mt19937& rng, std::vector<double>* pheno_per_sample, std::vector<double>* effect_per_variant, const std::string noise_dist, Logger &log) {
   double pheno_var = 0.0;
   double n = static_cast<double>(pheno_per_sample->size());
   for (int i = 0; i < pheno_per_sample->size(); i++) pheno_var += (pheno_per_sample->at(i) * pheno_per_sample->at(i));
@@ -1014,10 +1040,24 @@ void apply_heritability(float hsq, boost::mt19937& rng, std::vector<double>* phe
 
   std::vector<double> noise;
   //boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
-  int student_t_dof = 5;
-  boost::variate_generator<boost::mt19937&, boost::random::student_t_distribution<> > random_normal(rng, boost::random::student_t_distribution<>(student_t_dof));
+  if (noise_dist == "t") {
+      log << "Generate environmental noises from T distribution (DoF=5)..." << "\n";
+      int student_t_dof = 5;
+      boost::variate_generator<boost::mt19937&, boost::random::student_t_distribution<> > random_t(rng, boost::random::student_t_distribution<>(student_t_dof));
+      for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_t());
+  }
+  else if (noise_dist == "uniform") {
+      log << "Generate environmental noises from uniform distribution..." << "\n";
+      boost::variate_generator<boost::mt19937&, boost::random::uniform_01<> > random_uniform(rng, boost::random::uniform_01<>());
+      for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_uniform());
+  }
+  else {
+      log << "Generate environmental noises from normal distribution..." << "\n";
+      boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
+      for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_normal());
+  }
 
-  for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_normal());
+  //for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_normal());
   
   double gen_coef = 0, env_coef = 0;
   if ((fabs(hsq) <= std::numeric_limits<float>::epsilon()) || (fabs(pheno_var) <= std::numeric_limits<float>::epsilon())) {
@@ -1163,6 +1203,10 @@ main(int argc, char *argv[])
       "and .*.causals files (one file per trait) containing lists of causal variants and their effect sizes for each component in the mixture. "
       "See README.md file for detailed description of file formats.")
       // ("verbose", po::bool_switch(&simu_options.verbose)->default_value(false), "enable verbose logging")
+//      ("null-effect", po::bool_switch(&simu_options.null_effect)->default_value(false),
+//            "Zero effect size. Trait is affected by only environmental noise.")
+      ("noise-dist", po::value(&simu_options.noise_dist)->default_value("normal"),
+        "sampling distribution for noise term (supported: normal/t/uniform).")
     ;
 
     // expand documentation - format of output files
@@ -1300,8 +1344,10 @@ main(int argc, char *argv[])
                  &pio_files, &pheno1_per_sample, &pheno2_per_sample);
 
       // Apply heritability
-      apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant);
-      if (simu_options.num_traits==2) apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant);
+      //apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant);
+      apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant, simu_options.noise_dist,log);
+      //if (simu_options.num_traits==2) apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant);
+      if (simu_options.num_traits==2) apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant, simu_options.noise_dist, log);
 
       // Apply liability threshold model
       if (simu_options.cc) {
