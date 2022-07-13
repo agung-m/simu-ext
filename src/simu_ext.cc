@@ -84,7 +84,7 @@ struct SimuOptions {
   bool norm_effect;
 
   // Zero effect size, phenotype is purely from noise
-  //bool null_effect;
+  bool null_effect;
 
   // Sampling distribution for noise term
   std::string noise_dist;
@@ -108,7 +108,7 @@ struct SimuOptions {
     boost::posix_time::ptime const time_epoch(boost::gregorian::date(1970, 1, 1));
     seed = (boost::posix_time::microsec_clock::local_time() - time_epoch).ticks();
     verbose = false;
-    //null_effect = false;
+    null_effect = false;
   }
 };
 
@@ -742,7 +742,7 @@ void describe_simu_options(SimuOptions& s, Logger& log) {
   if (!s.trait1_s_pow.empty()) log << "\t--trait1-s-pow " << s.trait1_s_pow << " \\\n";
   if (!s.trait2_s_pow.empty()) log << "\t--trait2-s-pow " << s.trait2_s_pow << " \\\n";
   if (s.norm_effect) log << "\t--norm-effect \\\n";
-//  if (s.null_effect) log << "\t--null-effect \\\n";
+  if (s.null_effect) log << "\t--null-effect \\\n";
   log << "\t--noise-dist " << s.noise_dist << " \\\n";
   log << "\n";
 }
@@ -905,15 +905,16 @@ void find_freq(const SimuOptions& simu_options,
 
 void find_effect_sizes(const SimuOptions& simu_options, boost::mt19937& rng,
                        const std::vector<int>& component_per_variant,
-                       std::vector<double>* effect1_per_variant) {
+                       std::vector<double>* effect1_per_variant, Logger &log) {
   // generate vector of effect sizes (for trait1) for each variant
   effect1_per_variant->clear();
   for (int i = 0; i < simu_options.num_variants; i++) effect1_per_variant->push_back(0.0);
 
-//  if (simu_options.null_effect == true) {
-//      std::cout << "Null effect is enabled: each variant has zero genetic effect." << std::endl;
-//      return;
-//  }
+  if (simu_options.null_effect == true) {
+      //std::cout << "Null effect is enabled: no causal variants will be generated." << std::endl;
+      log << "WARN: Null effect is enabled: all SNPs have zero effect size and there will be no causal variants." << "\n";
+      return;
+  }
 
   boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
 
@@ -1203,8 +1204,8 @@ main(int argc, char *argv[])
       "and .*.causals files (one file per trait) containing lists of causal variants and their effect sizes for each component in the mixture. "
       "See README.md file for detailed description of file formats.")
       // ("verbose", po::bool_switch(&simu_options.verbose)->default_value(false), "enable verbose logging")
-//      ("null-effect", po::bool_switch(&simu_options.null_effect)->default_value(false),
-//            "Zero effect size. Trait is affected by only environmental noise.")
+      ("null-effect", po::bool_switch(&simu_options.null_effect)->default_value(false),
+            "Zero effect size. Trait is affected by only environmental noise.")
       ("noise-dist", po::value(&simu_options.noise_dist)->default_value("normal"),
         "sampling distribution for noise term (supported: normal/t/uniform).")
     ;
@@ -1286,11 +1287,11 @@ main(int argc, char *argv[])
       if (effect1_per_variant.empty()) {
         log << "Generate effect sizes from normal distribution...\n";
         if (simu_options.trait2_snp_offset != 0) find_effect_sizes_bivariate_trait2_snp_offset(simu_options, rng, component_per_variant, &effect1_per_variant, &effect2_per_variant);  
-        else if (simu_options.num_traits==1) find_effect_sizes(simu_options, rng, component_per_variant, &effect1_per_variant);
+        else if (simu_options.num_traits==1) find_effect_sizes(simu_options, rng, component_per_variant, &effect1_per_variant, log);
         else find_effect_sizes_bivariate(simu_options, rng, component_per_variant, &effect1_per_variant, &effect2_per_variant);
 
         // Apply --gcta-sigma flag or --trait1-s-pow, --trait2-s-pow
-        if (simu_options.gcta_sigma || !simu_options.trait1_s_pow.empty()) {
+        if ((simu_options.gcta_sigma || !simu_options.trait1_s_pow.empty()) && !simu_options.null_effect) {
           log << "Apply --gcta-sigma or --trait1-s-pow, --trait2-s-pow options to effect sizes...\n";
           for (int variant_index = 0; variant_index < simu_options.num_variants; variant_index++) {
             if (component_per_variant[variant_index] == -1) continue;
