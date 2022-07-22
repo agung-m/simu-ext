@@ -85,6 +85,8 @@ struct SimuOptions {
 
   // Zero effect size, phenotype is purely from noise
   bool null_effect;
+  // Constant effect size for all causal variants per trait
+  std::vector<float> const_effect;
 
   // Sampling distribution for noise term
   std::string noise_dist;
@@ -714,6 +716,9 @@ void fix_and_validate(SimuOptions& simu_options, po::variables_map& vm, Logger& 
             simu_options.noise_dist = "normal";
     }
 
+    for (auto val: simu_options.const_effect) if (val <= 0)
+            throw std::invalid_argument(std::string("ERROR: effect size --const-effect must be > 0"));
+
 }
 
 void describe_simu_options(SimuOptions& s, Logger& log) {
@@ -744,6 +749,7 @@ void describe_simu_options(SimuOptions& s, Logger& log) {
   if (s.norm_effect) log << "\t--norm-effect \\\n";
   if (s.null_effect) log << "\t--null-effect \\\n";
   log << "\t--noise-dist " << s.noise_dist << " \\\n";
+  if (!s.const_effect.empty()) log << "\t--const-effect " << s.const_effect << " \\\n";
   log << "\n";
 }
 
@@ -754,7 +760,6 @@ void find_causals_trait2_snp_offset(const SimuOptions& simu_options, boost::mt19
   component_per_variant->clear();
   for (int i = 0; i < simu_options.num_variants; i++) component_per_variant->push_back(-1);
   boost::variate_generator<boost::mt19937&, boost::uniform_int<> > random_integer(rng, boost::uniform_int<>());
-
   std::vector<int> variant_indices_permutation;
   for (int i = 0; i < simu_options.num_variants; i++) variant_indices_permutation.push_back(i);
   std::random_shuffle(variant_indices_permutation.begin(), variant_indices_permutation.end(), random_integer);
@@ -913,16 +918,34 @@ void find_effect_sizes(const SimuOptions& simu_options, boost::mt19937& rng,
   if (simu_options.null_effect == true) {
       //std::cout << "Null effect is enabled: no causal variants will be generated." << std::endl;
       log << "WARN: Null effect is enabled: all SNPs have zero effect size and there will be no causal variants." << "\n";
-      return;
+      //return;
   }
-
-  boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
-
-  for (int i = 0; i < simu_options.num_variants; i++) {
-    if (component_per_variant[i] == -1) continue;
-    double sigma = sqrt(simu_options.trait1_sigsq[component_per_variant[i]]);
-    effect1_per_variant->at(i) = sigma * random_normal();
+  else if (simu_options.const_effect[0] > 0) {
+      log << "WARN: Constant effect is enabled: all SNPs have equal effect sizes = " << simu_options.const_effect[0] << "\n";
+      for (int i = 0; i < simu_options.num_variants; i++) {
+          if (component_per_variant[i] == -1) continue;
+          double sigma = sqrt(simu_options.trait1_sigsq[component_per_variant[i]]);
+          effect1_per_variant->at(i) = sigma * simu_options.const_effect[0];
+      }
   }
+  else {
+      log << "Generate effect sizes from normal distribution...\n";
+      boost::variate_generator<boost::mt19937 &, boost::normal_distribution<> > random_normal(rng,
+                                                                                              boost::normal_distribution<>());
+      for (int i = 0; i < simu_options.num_variants; i++) {
+          if (component_per_variant[i] == -1) continue;
+          double sigma = sqrt(simu_options.trait1_sigsq[component_per_variant[i]]);
+          effect1_per_variant->at(i) = sigma * random_normal();
+      }
+  }
+//      boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
+//
+//      for (int i = 0; i < simu_options.num_variants; i++) {
+//          if (component_per_variant[i] == -1) continue;
+//          double sigma = sqrt(simu_options.trait1_sigsq[component_per_variant[i]]);
+//          effect1_per_variant->at(i) = sigma * random_normal();
+//      }
+
 }
 
 void find_effect_sizes_bivariate_trait2_snp_offset(const SimuOptions& simu_options, boost::mt19937& rng,
@@ -1033,30 +1056,53 @@ void find_pheno(const SimuOptions& simu_options,
   pio_files->reset_row();
 }
 
+std::vector<double> gen_noise(boost::mt19937& rng, size_t len, const std::string noise_dist, Logger &log) {
+    std::vector<double> noise;
+    //boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
+    if (noise_dist == "t") {
+        log << "Generate environmental noises from T distribution (DoF=5)..." << "\n";
+        int student_t_dof = 5;
+        boost::variate_generator<boost::mt19937&, boost::random::student_t_distribution<> > random_t(rng, boost::random::student_t_distribution<>(student_t_dof));
+        for (int i = 0; i < len; i++) noise.push_back(random_t());
+    }
+    else if (noise_dist == "uniform") {
+        log << "Generate environmental noises from uniform distribution..." << "\n";
+        boost::variate_generator<boost::mt19937&, boost::random::uniform_01<> > random_uniform(rng, boost::random::uniform_01<>());
+        for (int i = 0; i < len; i++) noise.push_back(random_uniform());
+    }
+    else {
+        log << "Generate environmental noises from normal distribution..." << "\n";
+        boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
+        for (int i = 0; i < len; i++) noise.push_back(random_normal());
+    }
+    return noise;
+}
+
 void apply_heritability(float hsq, boost::mt19937& rng, std::vector<double>* pheno_per_sample, std::vector<double>* effect_per_variant, const std::string noise_dist, Logger &log) {
   double pheno_var = 0.0;
   double n = static_cast<double>(pheno_per_sample->size());
   for (int i = 0; i < pheno_per_sample->size(); i++) pheno_var += (pheno_per_sample->at(i) * pheno_per_sample->at(i));
   pheno_var = pheno_var / n;
 
-  std::vector<double> noise;
-  //boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
-  if (noise_dist == "t") {
-      log << "Generate environmental noises from T distribution (DoF=5)..." << "\n";
-      int student_t_dof = 5;
-      boost::variate_generator<boost::mt19937&, boost::random::student_t_distribution<> > random_t(rng, boost::random::student_t_distribution<>(student_t_dof));
-      for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_t());
-  }
-  else if (noise_dist == "uniform") {
-      log << "Generate environmental noises from uniform distribution..." << "\n";
-      boost::variate_generator<boost::mt19937&, boost::random::uniform_01<> > random_uniform(rng, boost::random::uniform_01<>());
-      for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_uniform());
-  }
-  else {
-      log << "Generate environmental noises from normal distribution..." << "\n";
-      boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
-      for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_normal());
-  }
+//  std::vector<double> noise;
+//  //boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
+//  if (noise_dist == "t") {
+//      log << "Generate environmental noises from T distribution (DoF=5)..." << "\n";
+//      int student_t_dof = 5;
+//      boost::variate_generator<boost::mt19937&, boost::random::student_t_distribution<> > random_t(rng, boost::random::student_t_distribution<>(student_t_dof));
+//      for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_t());
+//  }
+//  else if (noise_dist == "uniform") {
+//      log << "Generate environmental noises from uniform distribution..." << "\n";
+//      boost::variate_generator<boost::mt19937&, boost::random::uniform_01<> > random_uniform(rng, boost::random::uniform_01<>());
+//      for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_uniform());
+//  }
+//  else {
+//      log << "Generate environmental noises from normal distribution..." << "\n";
+//      boost::variate_generator<boost::mt19937&, boost::normal_distribution<> > random_normal(rng, boost::normal_distribution<>());
+//      for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_normal());
+//  }
+  std::vector<double> noise = gen_noise(rng, pheno_per_sample->size(), noise_dist, log);
 
   //for (int i = 0; i < pheno_per_sample->size(); i++) noise.push_back(random_normal());
   
@@ -1071,6 +1117,12 @@ void apply_heritability(float hsq, boost::mt19937& rng, std::vector<double>* phe
 
   for (int i = 0; i < pheno_per_sample->size(); i++) pheno_per_sample->at(i) = pheno_per_sample->at(i) * gen_coef + noise[i] * env_coef;
   for (int i = 0; i < effect_per_variant->size(); i++) effect_per_variant->at(i) *= gen_coef;
+}
+
+void apply_noise(boost::mt19937& rng, std::vector<double>* pheno_per_sample, const std::string noise_dist, Logger &log) {
+    std::vector<double> noise = gen_noise(rng, pheno_per_sample->size(), noise_dist, log);
+
+    for (int i = 0; i < pheno_per_sample->size(); i++) pheno_per_sample->at(i) = pheno_per_sample->at(i) + noise[i];
 }
 
 void apply_liability_threshold(float k, int ncas, int ncon, boost::mt19937& rng, std::vector<double>* pheno_per_sample) {
@@ -1208,6 +1260,7 @@ main(int argc, char *argv[])
             "Zero effect size. Trait is affected by only environmental noise.")
       ("noise-dist", po::value(&simu_options.noise_dist)->default_value("normal"),
         "sampling distribution for noise term (supported: normal/t/uniform).")
+      ("const-effect", po::value< std::vector<float> >(&simu_options.const_effect)->multitoken(), "constant effect, by default 0.0 (disable); one value per trait")
     ;
 
     // expand documentation - format of output files
@@ -1285,7 +1338,7 @@ main(int argc, char *argv[])
 
       // Find effect sizes for causal variants (one per trait) --- unless user provided values in --causal-variants file
       if (effect1_per_variant.empty()) {
-        log << "Generate effect sizes from normal distribution...\n";
+        //log << "Generate effect sizes from normal distribution...\n";
         if (simu_options.trait2_snp_offset != 0) find_effect_sizes_bivariate_trait2_snp_offset(simu_options, rng, component_per_variant, &effect1_per_variant, &effect2_per_variant);  
         else if (simu_options.num_traits==1) find_effect_sizes(simu_options, rng, component_per_variant, &effect1_per_variant, log);
         else find_effect_sizes_bivariate(simu_options, rng, component_per_variant, &effect1_per_variant, &effect2_per_variant);
@@ -1344,11 +1397,19 @@ main(int argc, char *argv[])
       find_pheno(simu_options, component_per_variant, freq_vec, effect1_per_variant, effect2_per_variant,
                  &pio_files, &pheno1_per_sample, &pheno2_per_sample);
 
-      // Apply heritability
-      //apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant);
-      apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant, simu_options.noise_dist,log);
-      //if (simu_options.num_traits==2) apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant);
-      if (simu_options.num_traits==2) apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant, simu_options.noise_dist, log);
+      if (simu_options.const_effect[0] > 0) {
+          apply_noise(rng, &pheno1_per_sample, simu_options.noise_dist, log);
+      }
+      else {
+          // Apply heritability
+          //apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant);
+          apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant,
+                             simu_options.noise_dist, log);
+          //if (simu_options.num_traits==2) apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant);
+          if (simu_options.num_traits == 2)
+              apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant,
+                                 simu_options.noise_dist, log);
+      }
 
       // Apply liability threshold model
       if (simu_options.cc) {
