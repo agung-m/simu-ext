@@ -717,7 +717,7 @@ void fix_and_validate(SimuOptions& simu_options, po::variables_map& vm, Logger& 
     }
 
     for (auto val: simu_options.const_effect) if (val <= 0)
-            throw std::invalid_argument(std::string("ERROR: effect size --const-effect must be > 0"));
+        throw std::invalid_argument(std::string("ERROR: effect size --const-effect must be > 0"));
 
 }
 
