@@ -508,43 +508,49 @@ void fix_and_validate(SimuOptions& simu_options, po::variables_map& vm, Logger& 
       throw std::invalid_argument(std::string("ERROR: Prevalence --k must be between 0.0 and 1.0"));
   }
 
-  // inidialize default value for hsq (heritability) and check for out of range values
-  if (simu_options.hsq.empty())
-    for (int i = 0; i < simu_options.num_traits; i++) simu_options.hsq.push_back(DEFAULT_HSQ);
-  for (auto val: simu_options.hsq) if (val < 0 || val > 1)
-    throw std::invalid_argument(std::string("ERROR: Heritability --hsq must be between 0.0 and 1.0"));
+  if (!simu_options.null_effect) {
+	// initialize default value for hsq (heritability) and check for out of range values
+	if (simu_options.hsq.empty()) {
+	  for (int i = 0; i < simu_options.num_traits; i++) simu_options.hsq.push_back(DEFAULT_HSQ);
+	}
+	for (auto val: simu_options.hsq) if (val < 0 || val > 1) {
+		throw std::invalid_argument(std::string("ERROR: Heritability --hsq must be between 0.0 and 1.0"));
+	  }
+	// initialize default value for --causal-pi, --causal-n, --causal-variants and check for out of range values
+	if (!simu_options.causal_pi.empty() && (simu_options.causal_pi.size() != simu_options.num_components))
+	  throw std::invalid_argument(std::string("ERROR: Number of --causal-pi values does not match the number of components"));
+	if (!simu_options.causal_n.empty() && (simu_options.causal_n.size() != simu_options.num_components))
+	  throw std::invalid_argument(std::string("ERROR: Number of --causal-n values does not match the number of components"));
+	if (!simu_options.causal_variants.empty() && (simu_options.causal_variants.size() != simu_options.num_components))
+	  throw std::invalid_argument(std::string("ERROR: Number of --causal-variants values does not match the number of components"));
+	if (((int)simu_options.causal_pi.empty() + (int)simu_options.causal_n.empty() + (int)simu_options.causal_variants.empty()) < 2)
+	  throw std::invalid_argument(std::string("ERROR: At most one of --causal-pi, --causal-n, --causal-variants options must be used"));
+	if (simu_options.causal_pi.empty() && simu_options.causal_n.empty() && simu_options.causal_variants.empty())
+	  for (int i = 0; i < simu_options.num_components; i++) simu_options.causal_pi.push_back(DEFAULT_CAUSAL_PI);
+	for (auto val: simu_options.causal_pi) if (val <= 0 || val > 1)
+	  throw std::invalid_argument(std::string("ERROR: --causal-pi values must be between 0.0 and 1.0"));
+	for (auto val: simu_options.causal_n) if (val <= 0)
+	  throw std::invalid_argument(std::string("ERROR: --causal-n values must be a positive"));
 
-  // initialize default value for --causal-pi, --causal-n, --causal-variants and check for out of range values
-  if (!simu_options.causal_pi.empty() && (simu_options.causal_pi.size() != simu_options.num_components))
-    throw std::invalid_argument(std::string("ERROR: Number of --causal-pi values does not match the number of components"));
-  if (!simu_options.causal_n.empty() && (simu_options.causal_n.size() != simu_options.num_components))
-    throw std::invalid_argument(std::string("ERROR: Number of --causal-n values does not match the number of components"));
-  if (!simu_options.causal_variants.empty() && (simu_options.causal_variants.size() != simu_options.num_components))
-    throw std::invalid_argument(std::string("ERROR: Number of --causal-variants values does not match the number of components"));
-  if (((int)simu_options.causal_pi.empty() + (int)simu_options.causal_n.empty() + (int)simu_options.causal_variants.empty()) < 2)
-    throw std::invalid_argument(std::string("ERROR: At most one of --causal-pi, --causal-n, --causal-variants options must be used"));
-  if (simu_options.causal_pi.empty() && simu_options.causal_n.empty() && simu_options.causal_variants.empty())
-    for (int i = 0; i < simu_options.num_components; i++) simu_options.causal_pi.push_back(DEFAULT_CAUSAL_PI);
-  for (auto val: simu_options.causal_pi) if (val <= 0 || val > 1)
-    throw std::invalid_argument(std::string("ERROR: --causal-pi values must be between 0.0 and 1.0"));
-  for (auto val: simu_options.causal_n) if (val <= 0)
-    throw std::invalid_argument(std::string("ERROR: --causal-n values must be a positive"));
+	if (!simu_options.causal_regions.empty() && !simu_options.causal_variants.empty()) {
+	  log << "WARNING: Option --causal-regions can not be used together with --causal-variants, and will be ignored\n";
+	  simu_options.causal_regions.clear();
+	}
+	if (!simu_options.causal_regions.empty() && (simu_options.causal_regions.size() != simu_options.num_components))
+	  throw std::invalid_argument(std::string("ERROR: Number of --causal-regions values does not match the number of components"));
 
-  if (!simu_options.causal_regions.empty() && !simu_options.causal_variants.empty()) {
-    log << "WARNING: Option --causal-regions can not be used together with --causal-variants, and will be ignored\n";
-    simu_options.causal_regions.clear();
+	for (auto val: simu_options.causal_regions) if (!boost::filesystem::exists( val )) {
+	  std::stringstream ss; ss << "ERROR: input file " << val << " does not exist";
+	  throw std::runtime_error(ss.str());
+	}
+
+	for (auto val: simu_options.causal_variants) if (!boost::filesystem::exists( val )) {
+	  std::stringstream ss; ss << "ERROR: input file " << val << " does not exist";
+	  throw std::runtime_error(ss.str());
+	}
   }
-  if (!simu_options.causal_regions.empty() && (simu_options.causal_regions.size() != simu_options.num_components))
-    throw std::invalid_argument(std::string("ERROR: Number of --causal-regions values does not match the number of components"));
-
-  for (auto val: simu_options.causal_regions) if (!boost::filesystem::exists( val )) {
-    std::stringstream ss; ss << "ERROR: input file " << val << " does not exist";
-    throw std::runtime_error(ss.str());
-  }
-
-  for (auto val: simu_options.causal_variants) if (!boost::filesystem::exists( val )) {
-    std::stringstream ss; ss << "ERROR: input file " << val << " does not exist";
-    throw std::runtime_error(ss.str());
+  else {
+	log << "WARNING: --hsq, --causal-variants, --causal-n, --causal-pi, and --rg are not relevant for a null-effect simulation, and will be ignored\n";
   }
 
   // initialize default value for --trait1-sigsq and check for out of range values
@@ -792,6 +798,9 @@ void find_causals(const SimuOptions& simu_options, boost::mt19937& rng, Logger& 
   component_per_variant->clear();  
   for (int i = 0; i < simu_options.num_variants; i++) component_per_variant->push_back(-1);
 
+//  if (simu_options.null_effect) {
+//	return;
+//  }
   if (!simu_options.causal_variants.empty()) {
     // user explicitly specified causal variants
     bool effect_sizes_from_file = false;   // whether variants had effect size provided, or not
@@ -908,20 +917,26 @@ void find_freq(const SimuOptions& simu_options,
   pio_files->reset_row();
 }
 
+void init_zero_effect_sizes(const SimuOptions& simu_options, std::vector<double>* effect1_per_variant) {
+  effect1_per_variant->clear();
+  for (int i = 0; i < simu_options.num_variants; i++) effect1_per_variant->push_back(0.0);
+}
+
 void find_effect_sizes(const SimuOptions& simu_options, boost::mt19937& rng,
                        const std::vector<int>& component_per_variant,
                        std::vector<double>* effect1_per_variant, Logger &log) {
   // generate vector of effect sizes (for trait1) for each variant
-  effect1_per_variant->clear();
-  for (int i = 0; i < simu_options.num_variants; i++) effect1_per_variant->push_back(0.0);
+  //effect1_per_variant->clear();
+  //for (int i = 0; i < simu_options.num_variants; i++) effect1_per_variant->push_back(0.0);
+  init_zero_effect_sizes(simu_options, effect1_per_variant);
 
-  if (simu_options.null_effect == true) {
-      //std::cout << "Null effect is enabled: no causal variants will be generated." << std::endl;
-      log << "WARN: Null effect is enabled: all SNPs have zero effect size and there will be no causal variants." << "\n";
-      //return;
-  }
-  else if (simu_options.const_effect[0] > 0) {
-      log << "WARN: Constant effect is enabled: all SNPs have equal effect sizes = " << simu_options.const_effect[0] << "\n";
+//  if (simu_options.null_effect == true) {
+//      //std::cout << "Null effect is enabled: no causal variants will be generated." << std::endl;
+//      log << "WARNING: Null effect is enabled: all SNPs have zero effect size and there will be no causal variants." << "\n";
+//      //return;
+//  }
+  if (!simu_options.const_effect.empty() && simu_options.const_effect[0] > 0) {
+      log << "WARNING: Constant effect is enabled: all SNPs have equal effect sizes = " << simu_options.const_effect[0] << "\n";
       for (int i = 0; i < simu_options.num_variants; i++) {
           if (component_per_variant[i] == -1) continue;
           double sigma = sqrt(simu_options.trait1_sigsq[component_per_variant[i]]);
@@ -996,6 +1011,15 @@ void find_effect_sizes_bivariate(const SimuOptions& simu_options, boost::mt19937
   }
 }
 
+void init_zero_phenotypes(const SimuOptions& simu_options, const bool bivariate, std::vector<double>* pheno1_per_sample,
+						  std::vector<double>* pheno2_per_sample) {
+  pheno1_per_sample->clear(); pheno2_per_sample->clear();
+  for (int sample_index = 0; sample_index < simu_options.num_samples; sample_index++) {
+	pheno1_per_sample->push_back(0);
+	if (bivariate) pheno2_per_sample->push_back(0);
+  }
+}
+
 void find_pheno(const SimuOptions& simu_options, 
                 const std::vector<int>& component_per_variant,
                 const std::vector<double>& freq_vec,
@@ -1007,11 +1031,12 @@ void find_pheno(const SimuOptions& simu_options,
   const bool bivariate = (simu_options.num_traits == 2);
   std::vector<snp_t> buffer;
 
-  pheno1_per_sample->clear(); pheno2_per_sample->clear();
-  for (int sample_index = 0; sample_index < simu_options.num_samples; sample_index++) {
-    pheno1_per_sample->push_back(0);
-    if (bivariate) pheno2_per_sample->push_back(0);
-  }
+//  pheno1_per_sample->clear(); pheno2_per_sample->clear();
+//  for (int sample_index = 0; sample_index < simu_options.num_samples; sample_index++) {
+//    pheno1_per_sample->push_back(0);
+//    if (bivariate) pheno2_per_sample->push_back(0);
+//  }
+  init_zero_phenotypes(simu_options, bivariate, pheno1_per_sample, pheno2_per_sample);
 
   for (int variant_index = 0; variant_index < simu_options.num_variants; variant_index++) {
     if (component_per_variant[variant_index] == -1) {
@@ -1047,13 +1072,14 @@ void find_pheno(const SimuOptions& simu_options,
     }
   }
 
+
   // sanity-check -- now we should have reached end of the stream
   if (pio_files->skip_row() != PIO_END) {
     std::stringstream ss; ss << "ERROR: expect to find " << simu_options.num_variants << " variants across input files; more variants found. Are input Plink files corrupted?";
     throw std::runtime_error(ss.str());
   }
-
   pio_files->reset_row();
+  //std::cout << "Reaching end of the stream \n";
 }
 
 std::vector<double> gen_noise(boost::mt19937& rng, size_t len, const std::string noise_dist, Logger &log) {
@@ -1322,97 +1348,116 @@ main(int argc, char *argv[])
 
       // Generator of random numbers
       boost::mt19937 rng(simu_options.seed);
-  
+
+
       // Find component for causal variants
       std::vector<int> component_per_variant;
       std::vector<double> effect1_per_variant, effect2_per_variant;
-      if (simu_options.trait2_snp_offset == 0) {
-        find_causals(simu_options, rng, log, &pio_files, &component_per_variant, &effect1_per_variant, &effect2_per_variant);
-      } else {
-        find_causals_trait2_snp_offset(simu_options, rng, log, &pio_files, &component_per_variant, &effect1_per_variant, &effect2_per_variant);
-      }
+	  std::vector<double> freq_vec;
 
-      log << "Calculate allele frequencies (for causal markers only)... \n";
-      std::vector<double> freq_vec;  // vector of allele frequency; NB! vector has -1 for non-causal variants, as we don't need them anywhere later;
-      find_freq(simu_options, component_per_variant, &pio_files, &freq_vec);
+	  if (simu_options.null_effect) {
+		log << "WARN: Null effect is enabled: all SNPs have zero effect size and there will be no causal variants.\n";
+		component_per_variant.clear();
+		for (int i = 0; i < simu_options.num_variants; i++) component_per_variant.push_back(-1);
 
-      // Find effect sizes for causal variants (one per trait) --- unless user provided values in --causal-variants file
-      if (effect1_per_variant.empty()) {
-        //log << "Generate effect sizes from normal distribution...\n";
-        if (simu_options.trait2_snp_offset != 0) find_effect_sizes_bivariate_trait2_snp_offset(simu_options, rng, component_per_variant, &effect1_per_variant, &effect2_per_variant);  
-        else if (simu_options.num_traits==1) find_effect_sizes(simu_options, rng, component_per_variant, &effect1_per_variant, log);
-        else find_effect_sizes_bivariate(simu_options, rng, component_per_variant, &effect1_per_variant, &effect2_per_variant);
+		init_zero_effect_sizes(simu_options, &effect1_per_variant);
+	  }
+	  else {
+		if (simu_options.trait2_snp_offset == 0) {
+		  find_causals(simu_options, rng, log, &pio_files, &component_per_variant, &effect1_per_variant, &effect2_per_variant);
+		} else {
+		  find_causals_trait2_snp_offset(simu_options, rng, log, &pio_files, &component_per_variant, &effect1_per_variant, &effect2_per_variant);
+		}
 
-        // Apply --gcta-sigma flag or --trait1-s-pow, --trait2-s-pow
-        if ((simu_options.gcta_sigma || !simu_options.trait1_s_pow.empty()) && !simu_options.null_effect) {
-          log << "Apply --gcta-sigma or --trait1-s-pow, --trait2-s-pow options to effect sizes...\n";
-          for (int variant_index = 0; variant_index < simu_options.num_variants; variant_index++) {
-            if (component_per_variant[variant_index] == -1) continue;
-            double freq = freq_vec[variant_index];
-            double het = fabs(2 * freq * (1-freq));
-            if (het < std::numeric_limits<float>::epsilon()) {
-              pio_locus_t* locus = pio_files.get_locus(variant_index);
-              std::stringstream ss; ss << "Causal variant " << ((locus == nullptr) ? "rs???" : locus->name) << " has zero frequency. Can not apply --gcta-sigma or --trait1-s-pow, --trait2-s-pow ";
-              throw std::runtime_error(ss.str());
-            }
+		log << "Calculate allele frequencies (for causal markers only)... \n";
+		//std::vector<double> freq_vec;  // vector of allele frequency; NB! vector has -1 for non-causal variants, as we don't need them anywhere later;
+		find_freq(simu_options, component_per_variant, &pio_files, &freq_vec);
 
-            double trait1_s_pow = simu_options.gcta_sigma ? -1.0 : simu_options.trait1_s_pow[component_per_variant[variant_index]];
-            effect1_per_variant[variant_index] *= sqrt(pow(het, trait1_s_pow));
+		// Find effect sizes for causal variants (one per trait) --- unless user provided values in --causal-variants file
+		if (effect1_per_variant.empty()) {
+		  //log << "Generate effect sizes from normal distribution...\n";
+		  if (simu_options.trait2_snp_offset != 0) find_effect_sizes_bivariate_trait2_snp_offset(simu_options, rng, component_per_variant, &effect1_per_variant, &effect2_per_variant);
+		  else if (simu_options.num_traits==1) find_effect_sizes(simu_options, rng, component_per_variant, &effect1_per_variant, log);
+		  else find_effect_sizes_bivariate(simu_options, rng, component_per_variant, &effect1_per_variant, &effect2_per_variant);
 
-            if (simu_options.num_traits==2) {
-              double trait2_s_pow = simu_options.gcta_sigma ? -1.0 : simu_options.trait2_s_pow[component_per_variant[variant_index]];
-              effect2_per_variant[variant_index] *= sqrt(pow(het, trait2_s_pow));
-            }
-          }
-        }
-      } else {
-        log << "Use effect sizes provided in --causal-variants file.\n";
-        if (simu_options.num_components > 1)
-          log << "WARNING: when --causal-variants contain effect sizes there is no real need to use more than one component (--num-components), isn't it so?\n";
-        if (simu_options.gcta_sigma || (vm.count("trait1-sigsq") > 0) || (vm.count("trait2-sigsq") > 0) || (vm.count("rg") > 0) || (vm.count("trait1-s-pow") > 0) || (vm.count("trait2-s-pow") > 0))
-          log << "WARNING: Options --gcta-sigma, --trait1-sigsq, --trait2-sigsq, --rg, --trait1-s-pow, --trait2-s-pow are irrelevant and will be ignored.\n";
-        if (simu_options.norm_effect) {
-          log << "NB! due to --norm-effect option, all effect sizes from --causal-variants will be treated as per-normalized-genotypes effect sizes\n";
-          for (int variant_index = 0; variant_index < simu_options.num_variants; variant_index++) {
-            if (component_per_variant[variant_index] == -1) continue;
-            double freq = freq_vec[variant_index];
-            double het = fabs(2 * freq * (1-freq));
-            if (het < std::numeric_limits<float>::epsilon()) {
-              pio_locus_t* locus = pio_files.get_locus(variant_index);
-              std::stringstream ss; ss << "Causal variant " << ((locus == nullptr) ? "rs???" : locus->name) << " has zero frequency. Can not apply --norm-effect.";
-              throw std::runtime_error(ss.str());
-            }
+		  // Apply --gcta-sigma flag or --trait1-s-pow, --trait2-s-pow
+		  if ((simu_options.gcta_sigma || !simu_options.trait1_s_pow.empty()) && !simu_options.null_effect) {
+			log << "Apply --gcta-sigma or --trait1-s-pow, --trait2-s-pow options to effect sizes...\n";
+			for (int variant_index = 0; variant_index < simu_options.num_variants; variant_index++) {
+			  if (component_per_variant[variant_index] == -1) continue;
+			  double freq = freq_vec[variant_index];
+			  double het = fabs(2 * freq * (1-freq));
+			  if (het < std::numeric_limits<float>::epsilon()) {
+				pio_locus_t* locus = pio_files.get_locus(variant_index);
+				std::stringstream ss; ss << "Causal variant " << ((locus == nullptr) ? "rs???" : locus->name) << " has zero frequency. Can not apply --gcta-sigma or --trait1-s-pow, --trait2-s-pow ";
+				throw std::runtime_error(ss.str());
+			  }
 
-            effect1_per_variant[variant_index] /= sqrt(het);
-            if (simu_options.num_traits==2) effect2_per_variant[variant_index] /= sqrt(het);
-          }
-        } else {
-          log << "NB! without --norm-effect option all effect sizes from --causal-variants will be treated w.r.t. additive coded 0,1,2 genotypes\n";
-        }
-      }
+			  double trait1_s_pow = simu_options.gcta_sigma ? -1.0 : simu_options.trait1_s_pow[component_per_variant[variant_index]];
+			  effect1_per_variant[variant_index] *= sqrt(pow(het, trait1_s_pow));
 
-      log << "Calculate phenotypes... \n";
+			  if (simu_options.num_traits==2) {
+				double trait2_s_pow = simu_options.gcta_sigma ? -1.0 : simu_options.trait2_s_pow[component_per_variant[variant_index]];
+				effect2_per_variant[variant_index] *= sqrt(pow(het, trait2_s_pow));
+			  }
+			}
+		  }
+		} else {
+		  log << "Use effect sizes provided in --causal-variants file.\n";
+		  if (simu_options.num_components > 1)
+			log << "WARNING: when --causal-variants contain effect sizes there is no real need to use more than one component (--num-components), isn't it so?\n";
+		  if (simu_options.gcta_sigma || (vm.count("trait1-sigsq") > 0) || (vm.count("trait2-sigsq") > 0) || (vm.count("rg") > 0) || (vm.count("trait1-s-pow") > 0) || (vm.count("trait2-s-pow") > 0))
+			log << "WARNING: Options --gcta-sigma, --trait1-sigsq, --trait2-sigsq, --rg, --trait1-s-pow, --trait2-s-pow are irrelevant and will be ignored.\n";
+		  if (simu_options.norm_effect) {
+			log << "NB! due to --norm-effect option, all effect sizes from --causal-variants will be treated as per-normalized-genotypes effect sizes\n";
+			for (int variant_index = 0; variant_index < simu_options.num_variants; variant_index++) {
+			  if (component_per_variant[variant_index] == -1) continue;
+			  double freq = freq_vec[variant_index];
+			  double het = fabs(2 * freq * (1-freq));
+			  if (het < std::numeric_limits<float>::epsilon()) {
+				pio_locus_t* locus = pio_files.get_locus(variant_index);
+				std::stringstream ss; ss << "Causal variant " << ((locus == nullptr) ? "rs???" : locus->name) << " has zero frequency. Can not apply --norm-effect.";
+				throw std::runtime_error(ss.str());
+			  }
+
+			  effect1_per_variant[variant_index] /= sqrt(het);
+			  if (simu_options.num_traits==2) effect2_per_variant[variant_index] /= sqrt(het);
+			}
+		  } else {
+			log << "NB! without --norm-effect option all effect sizes from --causal-variants will be treated w.r.t. additive coded 0,1,2 genotypes\n";
+		  }
+		}
+	  }
+
       // Find phenotypes
       std::vector<double> pheno1_per_sample, pheno2_per_sample;
-      find_pheno(simu_options, component_per_variant, freq_vec, effect1_per_variant, effect2_per_variant,
-                 &pio_files, &pheno1_per_sample, &pheno2_per_sample);
+	  if (simu_options.null_effect) {
+		init_zero_phenotypes(simu_options, false, &pheno1_per_sample, &pheno2_per_sample);
+	  }
+	  else {
+		log << "Calculate phenotypes... \n";
+		find_pheno(simu_options, component_per_variant, freq_vec, effect1_per_variant, effect2_per_variant,
+				   &pio_files, &pheno1_per_sample, &pheno2_per_sample);
+	  }
 
-      if (simu_options.const_effect[0] > 0) {
-          apply_noise(rng, &pheno1_per_sample, simu_options.noise_dist, log);
+      if (!simu_options.const_effect.empty() || simu_options.null_effect) {
+		log << "Apply environmental noise ... \n";
+		apply_noise(rng, &pheno1_per_sample, simu_options.noise_dist, log);
       }
       else {
-          // Apply heritability
-          //apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant);
-          apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant,
-                             simu_options.noise_dist, log);
-          //if (simu_options.num_traits==2) apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant);
-          if (simu_options.num_traits == 2)
-              apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant,
-                                 simu_options.noise_dist, log);
+		// Apply heritability
+		//log << "Apply heritability ... \n";
+		//apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant);
+		apply_heritability(simu_options.hsq[0], rng, &pheno1_per_sample, &effect1_per_variant,
+						   simu_options.noise_dist, log);
+		//if (simu_options.num_traits==2) apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant);
+		if (simu_options.num_traits == 2)
+			apply_heritability(simu_options.hsq[1], rng, &pheno2_per_sample, &effect2_per_variant,simu_options.noise_dist, log);
       }
 
       // Apply liability threshold model
-      if (simu_options.cc) {
+	  //if (simu_options.cc) {
+	  if (simu_options.cc && !simu_options.null_effect) {
         apply_liability_threshold(simu_options.k[0], simu_options.ncas[0], simu_options.ncon[0], rng, &pheno1_per_sample);
         if (simu_options.num_traits==2) apply_liability_threshold(simu_options.k[1], simu_options.ncas[1], simu_options.ncon[1], rng, &pheno2_per_sample);
       }
